@@ -1,0 +1,9 @@
+{
+  "name": "swiftui2048-probe",
+  "private": true,
+  "type": "module",
+  "description": "Plays the browser build of the port in Chromium and judges every input against upstream's algorithm.",
+  "dependencies": {
+    "playwright": "1.47.2"
+  }
+}

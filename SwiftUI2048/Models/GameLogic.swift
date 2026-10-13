@@ -35,9 +35,23 @@ final class GameLogic : ObservableObject {
         _globalID += 1
         return _globalID
     }
-    
-    init() {
+
+    /// Where the new blocks land (the port's test seam): an index into the given range of
+    /// blank squares. The app draws it from the system's random source, exactly upstream's
+    /// `Int.random(in:)`; a test passes a chooser of its own to make the board predictable.
+    fileprivate let randomIndex: (Range<Int>) -> Int
+
+    init(randomIndex: @escaping (Range<Int>) -> Int = { Int.random(in: $0) }) {
+        self.randomIndex = randomIndex
         newGame()
+    }
+    
+    /// A game continuing from a board the caller laid out (the port's other test seam; the
+    /// app never calls it). No blocks are generated; the gesture direction and the id
+    /// counter start as in a new game.
+    init(board: BlockMatrixType, randomIndex: @escaping (Range<Int>) -> Int = { Int.random(in: $0) }) {
+        self.randomIndex = randomIndex
+        _blockMatrix = board
     }
     
     func newGame() {
@@ -149,7 +163,7 @@ final class GameLogic : ObservableObject {
         }
         
         // Place the first block.
-        var placeLocIndex = Int.random(in: 0..<blankLocations.count)
+        var placeLocIndex = randomIndex(0..<blankLocations.count)
         _blockMatrix.place(IdentifiedBlock(id: newGlobalID, number: 2), to: blankLocations[placeLocIndex])
         
         // Place the second block.
@@ -157,7 +171,7 @@ final class GameLogic : ObservableObject {
             return false
         }
         blankLocations[placeLocIndex] = lastLoc
-        placeLocIndex = Int.random(in: 0..<(blankLocations.count - 1))
+        placeLocIndex = randomIndex(0..<(blankLocations.count - 1))
         _blockMatrix.place(IdentifiedBlock(id: newGlobalID, number: 2), to: blankLocations[placeLocIndex])
         
         return true

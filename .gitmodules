@@ -1,0 +1,3 @@
+[submodule "vendor/swiftui-web"]
+	path = vendor/swiftui-web
+	url = https://github.com/iamcgn/swiftui-web.git

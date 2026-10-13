@@ -1,0 +1,76 @@
+name: CI
+on:
+  push:
+  pull_request:
+env:
+  SWIFT_VERSION: "6.3.3"
+jobs:
+  # The native app: Apple's SwiftUI, Xcode's toolchain, the unit tests on an iOS simulator
+  # and a build for macOS.
+  native:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode
+        run: xcodebuild -version
+      - name: iOS simulator tests
+        run: |
+          DEVICE=$(xcrun simctl list devices available | grep -E '^\s+iPhone' | head -1 | sed -E 's/.*\(([0-9A-F-]+)\).*/\1/')
+          echo "device $DEVICE"; mkdir -p .build
+          xcrun simctl boot "$DEVICE" || true
+          xcodebuild test -project SwiftUI2048.xcodeproj -scheme SwiftUI2048 \
+            -destination "platform=iOS Simulator,id=$DEVICE" -derivedDataPath .build/xcode \
+            CODE_SIGNING_ALLOWED=NO | tee .build/xcodebuild-ios.log | grep -E 'Test (Suite|Case|run)|passed|failed|error:|TEST (SUCCEEDED|FAILED)'
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: macOS build
+        run: xcodebuild build -project SwiftUI2048.xcodeproj -scheme SwiftUI2048 -destination 'platform=macOS' -derivedDataPath .build/xcode CODE_SIGNING_ALLOWED=NO -quiet
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: native-logs, path: .build/xcodebuild-ios.log, if-no-files-found: ignore }
+
+  # The browser build: SwiftUIWeb's SwiftUI on the wasm SDK, played in Chromium by the probe,
+  # and (on the default branch) published to GitHub Pages.
+  web:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - name: Swift toolchain and wasm SDK
+        run: |
+          brew install swiftly binaryen
+          swiftly init --assume-yes --skip-install --no-modify-profile
+          . ~/.swiftly/env.sh
+          swiftly install $SWIFT_VERSION --use --assume-yes
+          swift sdk install https://download.swift.org/swift-6.3.3-release/wasm-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_wasm.artifactbundle.tar.gz \
+            --checksum cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7
+      - name: Build the site (release)
+        run: . ~/.swiftly/env.sh && scripts/build-web.sh
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Playwright
+        run: cd Playwright && npm install && npx playwright install --with-deps chromium
+      - name: Play it in Chromium (every input judged against upstream's algorithm)
+        run: |
+          python3 -m http.server 8791 --bind 127.0.0.1 --directory dist >/dev/null 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8791/index.html >/dev/null && break; sleep 1; done
+          cd Playwright && node game-probe.mjs http://127.0.0.1:8791/index.html --out ../.build/probe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: probe-evidence, path: .build/probe }
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        with: { path: dist }
+
+  pages:
+    needs: web
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -30,10 +30,16 @@ struct GameView : View {
     @State var ignoreGesture = false
     @EnvironmentObject var gameLogic: GameLogic
     
+    // The port: the board holds keyboard focus so the arrow keys reach it (onKeyPress acts
+    // on the focused view; upstream read the keys in the window's responder instead).
+    @FocusState fileprivate var boardFocused: Bool
+    
     fileprivate struct LayoutTraits {
         let bannerOffset: CGSize
         let showsBanner: Bool
         let containerAlignment: Alignment
+        // The port: where the New Game button sits — the edge opposite the banner.
+        let buttonAlignment: Alignment
     }
     
     fileprivate func layoutTraits(`for` proxy: GeometryProxy) -> LayoutTraits {
@@ -48,7 +54,8 @@ struct GameView : View {
                 ? .init(width: 32, height: 0)
                 : .init(width: 0, height: 32),
             showsBanner: landscape ? proxy.size.width > 720 : proxy.size.height > 550,
-            containerAlignment: landscape ? .leading : .top
+            containerAlignment: landscape ? .leading : .top,
+            buttonAlignment: landscape ? .trailing : .bottom
         )
     }
     
@@ -112,6 +119,15 @@ struct GameView : View {
                                       blockEnterEdge: .from(self.gameLogic.lastGestureDirection))
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .center)
+                    
+                    // The port: upstream's New Game lived only in the Catalyst and macOS menus;
+                    // a phone and a browser page have no menu bar, so the game shows it.
+                    Button("New Game") {
+                        self.gameLogic.startNewGame()
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(32)
+                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: layoutTraits.buttonAlignment)
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height, alignment: .center)
                 .background(
@@ -123,11 +139,39 @@ struct GameView : View {
         }
     }
     
+    // The port: upstream's `pressesBegan` (Catalyst) and `keyDown` (macOS) as onKeyPress on the
+    // focused board. The down phase only, as the macOS shell ignored key repeats.
+    fileprivate func keyMove(_ press: KeyPress) -> KeyPress.Result {
+        switch press.key {
+        case .upArrow:
+            self.gameLogic.moveAnimated(.up)
+        case .downArrow:
+            self.gameLogic.moveAnimated(.down)
+        case .leftArrow:
+            self.gameLogic.moveAnimated(.left)
+        case .rightArrow:
+            self.gameLogic.moveAnimated(.right)
+        default:
+            return .ignored
+        }
+        return .handled
+    }
+    
+    var keyedContent: some View {
+        content
+            .focusable()
+            .focused($boardFocused)
+            .onAppear { self.boardFocused = true }
+            .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow], phases: .down) { press in
+                self.keyMove(press)
+            }
+    }
+    
     var body: AnyView {
         return gestureEnabled ? (
-            content
+            keyedContent
                 .gesture(gesture, including: .all)>*
-        ) : content>*
+        ) : keyedContent>*
     }
     
 }

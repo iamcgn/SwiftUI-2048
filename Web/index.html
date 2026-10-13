@@ -1,0 +1,78 @@
+<!doctype html>
+<html data-wasm-bytes="">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>2048 — a SwiftUI game in the browser</title>
+<meta name="description" content="unixzii/SwiftUI-2048 as a portable SwiftUI source port, running in the browser through SwiftUIWeb. Swipe or use the arrow keys.">
+<style>
+html,body{margin:0;height:100%;background:#f5f0e6;overflow:hidden;overscroll-behavior:none;touch-action:none}
+/* The game fills the page above the credit line. */
+#app{position:relative;width:100%;height:calc(100% - 28px)}
+/* The loading screen: shown until the app has painted its first frame (`swiftuiwebready`). */
+#loading{position:fixed;inset:0;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#f5f0e6;color:#776e65;font:15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;transition:opacity .3s ease}
+#loading.done{opacity:0;pointer-events:none}
+#loading .name{font-size:40px;font-weight:900;letter-spacing:-.02em}
+#loading .bar{position:relative;width:min(240px,60vw);height:4px;border-radius:2px;background:rgba(0,0,0,.08);overflow:hidden}
+#loading .fill{position:absolute;inset:0 auto 0 0;width:0;border-radius:2px;background:#edc22e;transition:width .15s linear}
+#loading .fill.indeterminate{width:40%;animation:slide 1.1s ease-in-out infinite}
+@keyframes slide{from{left:-40%}to{left:100%}}
+#loading .status{font-size:13px;color:#8f8278;font-variant-numeric:tabular-nums;min-height:1.4em}
+#loading.failed .fill{background:#d0342c}
+/* The credit line: the game is unixzii's; the port and the SwiftUI runtime underneath are linked. */
+#credit{position:fixed;left:0;right:0;bottom:0;height:28px;box-sizing:border-box;margin:0;z-index:2;padding:6px 12px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:12px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;color:#8f8278;pointer-events:none}
+#credit a{color:#776e65;pointer-events:auto}
+</style></head>
+<body><div id="app"></div>
+<div id="loading" role="status" aria-live="polite"><div class="name">2048</div><div class="bar"><div class="fill indeterminate"></div></div><div class="status">Loading…</div></div>
+<p id="credit"><a href="https://github.com/unixzii/SwiftUI-2048">SwiftUI-2048</a> by Cyandev (MIT) · <a href="https://github.com/iamcgn/SwiftUI-2048">portable port</a> · runs on <a href="https://github.com/iamcgn/swiftui-web">SwiftUIWeb</a></p>
+<script type="module">
+  import { init } from "./.build/wasm/plugins/PackageToJS/outputs/Package/index.js";
+  const wasm = new URL("./.build/wasm/plugins/PackageToJS/outputs/Package/SwiftUI2048.wasm", import.meta.url);
+  const screen = document.getElementById("loading");
+  const fill = screen.querySelector(".fill"), status = screen.querySelector(".status");
+  const phase = (text) => { status.textContent = text; fill.classList.add("indeterminate"); fill.style.width = ""; };
+  // The first painted frame takes the loading screen down (the host dispatches the event).
+  let hidden = false;
+  const hide = () => {
+    if (hidden) return;
+    hidden = true;
+    screen.classList.add("done");
+    screen.addEventListener("transitionend", () => screen.remove(), { once: true });
+  };
+  document.addEventListener("swiftuiwebready", hide, { once: true });
+  try {
+    // The download is watched here so the bar can move: the bytes are counted after the
+    // browser's own decompression, against the size the build wrote into <html>.
+    const response = await fetch(wasm);
+    if (!response.ok) throw new Error("HTTP " + response.status + " for " + wasm.pathname.split("/").pop());
+    const declared = Number(document.documentElement.dataset.wasmBytes) || 0;
+    const total = response.headers.get("content-encoding") ? declared : (Number(response.headers.get("content-length")) || declared);
+    let received = 0;
+    const megabytes = (n) => (n / 1048576).toFixed(1) + " MB";
+    const progress = () => {
+      if (total > 0) {
+        const fraction = Math.min(1, received / total);
+        fill.classList.remove("indeterminate");
+        fill.style.width = (fraction * 100).toFixed(1) + "%";
+        status.textContent = "Downloading " + Math.round(fraction * 100) + "%";
+      } else {
+        status.textContent = "Downloading " + megabytes(received);
+      }
+    };
+    const watched = response.body.pipeThrough(new TransformStream({
+      transform(chunk, controller) { received += chunk.byteLength; progress(); controller.enqueue(chunk); },
+      flush() { phase("Compiling…"); },
+    }));
+    const module = new Response(watched, { headers: { "Content-Type": "application/wasm" } });
+    await init({ module });
+    phase("Starting…");
+    setTimeout(hide, 2000);
+  } catch (error) {
+    screen.classList.add("failed");
+    fill.classList.remove("indeterminate");
+    fill.style.width = "100%";
+    status.textContent = "Could not load: " + (error && error.message ? error.message : error);
+    throw error;
+  }
+</script>
+</body>
+</html>
