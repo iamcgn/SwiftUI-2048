@@ -45,6 +45,8 @@ jobs:
             --checksum cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7
       - name: Build the site (release)
         run: . ~/.swiftly/env.sh && scripts/build-web.sh
+      - name: Build the test harness variant (HARNESS defined; the probe's exact-board cases, never published)
+        run: . ~/.swiftly/env.sh && scripts/build-web.sh --harness
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - name: Playwright
@@ -52,8 +54,9 @@ jobs:
       - name: Play it in Chromium (every input judged against upstream's algorithm)
         run: |
           python3 -m http.server 8791 --bind 127.0.0.1 --directory dist >/dev/null 2>&1 &
-          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8791/index.html >/dev/null && break; sleep 1; done
-          cd Playwright && node game-probe.mjs http://127.0.0.1:8791/index.html --out ../.build/probe
+          python3 -m http.server 8792 --bind 127.0.0.1 --directory dist-harness >/dev/null 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8791/index.html >/dev/null && curl -sf http://127.0.0.1:8792/index.html >/dev/null && break; sleep 1; done
+          cd Playwright && node game-probe.mjs http://127.0.0.1:8791/index.html --harness http://127.0.0.1:8792/index.html --out ../.build/probe
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: probe-evidence, path: .build/probe }

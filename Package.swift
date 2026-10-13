@@ -29,12 +29,18 @@ let package = Package(
                 .product(name: "SwiftUI", package: "SwiftUIWeb"),
                 .product(name: "SwiftUIWebCanvas", package: "SwiftUIWeb", condition: .when(platforms: [.wasi])),
                 .product(name: "SwiftUIWebNative", package: "SwiftUIWeb", condition: .when(platforms: [.macOS])),
+                // The harness build reads the page's URL (SwiftUI2048App.makeGameLogic, `-DHARNESS`).
+                .product(name: "JavaScriptKit", package: "JavaScriptKit", condition: .when(platforms: [.wasi])),
             ] + shadows,
             path: "SwiftUI2048",
             exclude: ["Preview Content"],
             resources: [.process("Assets.xcassets")],
-            // Swift 5 mode, as upstream's Xcode target (SWIFT_VERSION 5.0).
-            swiftSettings: [.swiftLanguageMode(.v5)],
+            // Swift 5 mode, as upstream's Xcode target (SWIFT_VERSION 5.0). The harness build
+            // (`scripts/build-web.sh --harness`, SWIFTUI2048_HARNESS=1 in the environment)
+            // defines HARNESS: SwiftUI2048App.makeGameLogic then reads the page's URL. The
+            // PackageToJS plugin runs its own build, so a `-Xswiftc -D` on the command line
+            // would not reach the compiler; the manifest decides.
+            swiftSettings: [.swiftLanguageMode(.v5)] + (Context.environment["SWIFTUI2048_HARNESS"] == "1" ? [.define("HARNESS")] : []),
             // wasm-ld's default 64 KB shadow stack overflows on deep view trees; give the app 4 MB.
             linkerSettings: [.unsafeFlags(["-Xlinker", "-z", "-Xlinker", "stack-size=4194304"], .when(platforms: [.wasi]))]
         ),

@@ -15,7 +15,14 @@
 //   layout               portrait, phone landscape and tablet landscape: the banner as
 //                        upstream shows it, the New Game button clear of the grid
 //   dom-shortcut         what a page can and cannot see of ⌘N/Ctrl+N (recorded, not a pass)
-// Usage: node game-probe.mjs http://127.0.0.1:8791/index.html [--out ../.build/probe]
+//   controlled-*         on the HARNESS build only (`scripts/build-web.sh --harness`, served
+//                        separately and passed as --harness <url>): the page's URL lays out
+//                        the board and names where new blocks land through the model's two
+//                        test seams, so both no-op variants and the no-spawn-under-two-blanks
+//                        rule are asserted on exact boards, every run. The default page above
+//                        is the published build and runs with upstream's random source; its
+//                        arrows flow still looks for the same cases and reports what it saw.
+// Usage: node game-probe.mjs http://127.0.0.1:8791/index.html [--harness http://127.0.0.1:8792/index.html] [--out ../.build/probe]
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -27,6 +34,7 @@ const url = args.find(a => a.startsWith('http'));
 const option = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fallback; };
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = option('--out', join(root, '.build', 'probe'));
+const harness = option('--harness', null);
 if (!url) { console.error('usage: node game-probe.mjs <url> [--out dir]'); process.exit(2); }
 mkdirSync(out, { recursive: true });
 
@@ -182,10 +190,11 @@ try {
   // so upstream spawns nothing) and a swipe that moves nothing but still spawns (upstream's
   // misaligned "moved" test) have all been seen
   {
-    let merges = 0, unchanged = 0, spawnedUnchanged = 0, moves = 0, failures = 0, freshBoards = 0;
+    let merges = 0, unchanged = 0, spawnedUnchanged = 0, failures = 0, freshBoards = 0;
     // A swipe that moves nothing needs every line on its axis to hold at most one block, or
     // blocks already against that edge: mid-game, with two blocks spawned per move, that
     // never comes; a fresh two-block board offers it about one time in five.
+    let noopMoves = 0;
     for (let tries = 0; unchanged === 0 && tries < 40 && failures === 0; tries++) {
       if (tries > 0) { await clickNewGame(); await settle(); }
       freshBoards++;
@@ -193,29 +202,45 @@ try {
       const noop = DIRECTIONS.find(d => !expectedMove(board, d).moved);
       if (!noop) continue;
       const verdict = await play('arrow (nothing moves)', noop, () => page.keyboard.press(arrow[noop]));
-      moves++;
+      noopMoves++;
       if (!verdict.ok) failures++; else if (!verdict.moved) unchanged++;
     }
-    const order = ['left', 'down', 'right', 'up'];
-    for (let i = 0; i < 80 && (merges === 0 || spawnedUnchanged === 0 || i < 4) && failures === 0; i++) {
-      let direction = order[i % 4];
-      if (i >= 4) {
-        const board = (await readBoard()).board;
-        const predictions = DIRECTIONS.map(d => ({ d, ...expectedMove(board, d) })).map(p => ({ ...p, changed: !same(board, p.board) }));
-        const pick = (spawnedUnchanged === 0 && predictions.find(p => p.moved && !p.changed && blanks(p.board) >= 2))
-          || (merges === 0 && predictions.find(p => p.board.flat().filter(Boolean).length < board.flat().filter(Boolean).length))
-          || predictions.find(p => p.changed);
-        if (pick) direction = pick.d;
-      }
+    // The four directions once each from where the no-op search left the board, then short
+    // games: a fresh board, up to eight moves steered by what the reference predicts (first a
+    // swipe that moves nothing yet spawns — a compacted line of unequal blocks with two blanks
+    // left, which a sparse board offers and a full one does not — then a merge, then any
+    // change), a new game when a board fills, until a merge and that spawn have been seen.
+    let moves = noopMoves;
+    for (const direction of ['left', 'down', 'right', 'up']) {
       const verdict = await play('arrow', direction, () => page.keyboard.press(arrow[direction]));
       moves++;
-      if (!verdict.ok) { failures++; if (failures > 2) break; continue; }
+      if (!verdict.ok) { failures++; continue; }
       merges += verdict.merges;
       if (!verdict.moved) unchanged++;
       if (verdict.moved && !verdict.changed && verdict.spawns.length === 2) spawnedUnchanged++;
     }
-    const ok = failures === 0 && merges > 0 && unchanged > 0 && spawnedUnchanged > 0;
-    flow('arrows', ok ? 'passed' : 'failed', { moves, merges, unchanged, spawnedUnchanged, freshBoards, note: `${moves} moves judged, ${merges} merges, ${unchanged} swipe that left the board alone (after ${freshBoards} fresh boards), ${spawnedUnchanged} that moved nothing yet spawned (upstream's quirk)` });
+    for (let game = 0; game < 25 && (merges === 0 || spawnedUnchanged === 0) && failures === 0; game++) {
+      await clickNewGame(); await settle(); freshBoards++;
+      for (let i = 0; i < 8 && (merges === 0 || spawnedUnchanged === 0) && failures === 0; i++) {
+        const board = (await readBoard()).board;
+        const predictions = DIRECTIONS.map(d => ({ d, ...expectedMove(board, d) })).map(p => ({ ...p, changed: !same(board, p.board) }));
+        const pick = (spawnedUnchanged === 0 && predictions.find(p => p.moved && !p.changed && blanks(p.board) >= 2))
+          || (merges === 0 && predictions.find(p => p.board.flat().filter(Boolean).length < board.flat().filter(Boolean).length))
+          || predictions.find(p => p.changed && blanks(p.board) >= 2);
+        if (!pick) break;
+        const verdict = await play('arrow', pick.d, () => page.keyboard.press(arrow[pick.d]));
+        moves++;
+        if (!verdict.ok) { failures++; break; }
+        merges += verdict.merges;
+        if (!verdict.moved) unchanged++;
+        if (verdict.moved && !verdict.changed && verdict.spawns.length === 2) spawnedUnchanged++;
+      }
+    }
+    // Every move must have matched the reference and a merge must have been seen; the two
+    // no-op variants are reported here as found by chance and asserted on exact boards in the
+    // controlled flows (with --harness), since a random game may not offer them.
+    const ok = failures === 0 && merges > 0 && moves >= 4;
+    flow('arrows', ok ? 'passed' : 'failed', { moves, merges, unchanged, spawnedUnchanged, freshBoards, note: `${moves} moves judged, ${merges} merges, ${unchanged} swipe(s) that left the board alone (after ${freshBoards} fresh boards), ${spawnedUnchanged} that moved nothing yet spawned (upstream's quirk) — by chance; see controlled-*` });
     await shot('arrows');
   }
 
@@ -287,6 +312,70 @@ try {
     flow('dom-shortcut', 'recorded', { syntheticShortcutResetTheBoard: !same(before, after), note: `synthetic ⌘N/Ctrl+N ${same(before, after) ? 'did not reach' : 'reached'} the game; a real browser reserves it (New Window), so the visible button is the restart` });
   }
 
+  // controlled-*: the harness build, exact boards through the seams (chooser=first: new blocks
+  // land on the first blank, then the last)
+  if (harness) {
+    const open = async (board) => {
+      await page.goto(`${harness}?chooser=first&board=${board.flat().join(',')}`);
+      await page.waitForFunction(() => window.__swiftuiwebDebug && window.__swiftuiwebDebug.frameCount() > 0, null, { timeout: 180000 });
+      await settle();
+      const read = (await readBoard()).board;
+      if (!same(read, board)) throw new Error(`the harness did not lay out the board: ${show(read)}`);
+    };
+    const exact = async (name, direction, expected) => {
+      await page.keyboard.press(arrow[direction]);
+      await settle();
+      const after = (await readBoard()).board;
+      const ok = same(after, expected);
+      if (!ok) problem(`${name}: after ${direction} ${show(after)}, expected ${show(expected)}`);
+      return ok;
+    };
+    const cases = [
+      // Nothing moves, nothing spawns: one block already against the edge, every line on the
+      // axis holding at most one block.
+      ['controlled-no-move', [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], [
+        ['left', [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]],
+        ['up', [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]],
+      ]],
+      // Nothing moves, yet two blocks spawn (upstream's misaligned "moved" test): a compacted
+      // line of unequal blocks swiped toward its edge; the same board swiped across the other
+      // axis moves nothing and spawns nothing.
+      ['controlled-no-move-spawn', [[2, 4, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], [
+        ['left', [[2, 4, 2, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 2]]],
+      ]],
+      ['controlled-no-move-spawn-other-axis', [[2, 4, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], [
+        ['up', [[2, 4, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]],
+      ]],
+      // A move with one blank left: no block spawns.
+      ['controlled-no-spawn-under-two-blanks', [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 128, 0]], [
+        ['right', [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [0, 32, 64, 128]]],
+      ]],
+      // Merges once per pair, leading pair first; the spawns on the first and the last blank.
+      ['controlled-merge', [[2, 2, 2, 0], [4, 2, 2, 0], [0, 0, 0, 0], [0, 0, 0, 0]], [
+        ['left', [[4, 2, 2, 0], [4, 4, 0, 0], [0, 0, 0, 0], [0, 0, 0, 2]]],
+      ]],
+    ];
+    for (const [name, board, steps] of cases) {
+      let ok = true;
+      try {
+        await open(board);
+        for (const [direction, expected] of steps) ok = (await exact(name, direction, expected)) && ok;
+      } catch (error) { ok = false; problem(`${name}: ${error.message}`); }
+      flow(name, ok ? 'passed' : 'failed', { controlled: true, board, note: `harness build, board laid out through the seams, chooser=first: ${steps.map(([d]) => d).join(', ')} ${ok ? 'exact' : 'MISMATCH'}` });
+      await shot(name);
+    }
+    // The harness's New Game lands the two blocks where the chooser says: a known board.
+    {
+      await clickNewGame(); await settle();
+      const fresh = (await readBoard()).board;
+      const ok = same(fresh, [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 2]]);
+      if (!ok) problem(`controlled-new-game: ${show(fresh)}`);
+      flow('controlled-new-game', ok ? 'passed' : 'failed', { controlled: true, note: 'harness build, chooser=first: the first and the last blank' });
+    }
+  } else {
+    flow('controlled', 'skipped', { note: 'no --harness url: the exact-board cases did not run' });
+  }
+
   if (consoleErrors.length) problem('console errors: ' + consoleErrors.join(' | '));
 } catch (error) {
   problem('probe: ' + (error.stack || error.message));
@@ -294,7 +383,8 @@ try {
   await browser.close();
 }
 const judged = report.flows.filter(f => f.outcome !== 'recorded');
-report.full_app_pass = judged.length >= 6 && judged.every(f => f.outcome === 'passed') && report.problems.length === 0;
+// Passing needs the published page's flows and the controlled flows on the harness build.
+report.full_app_pass = judged.length >= 6 && judged.every(f => f.outcome === 'passed') && report.flows.some(f => f.name === 'controlled-no-move-spawn') && report.problems.length === 0;
 report.finished = new Date().toISOString();
 writeFileSync(join(out, 'report.json'), JSON.stringify(report, null, 2));
 console.log(`game probe: ${report.full_app_pass ? 'PASSED' : 'FAILED'} (${join(out, 'report.json')})`);

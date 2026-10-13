@@ -135,19 +135,34 @@ the restart is a visible button and the probe records the shortcut rather than c
 - `Playwright/game-probe.mjs` — plays the browser build in headless Chromium. It reads the
   settled board as cells (column, row, number) from the page's display list and judges every
   input against `expectedMove`, a JavaScript port of upstream's `GameLogic.move` (quirk 3
-  included). Flows: launch, arrows (until a merge, a swipe that changes nothing, and a
-  changes-nothing-yet-spawns swipe have all been seen), New Game then arrows (a regression:
-  a click once dropped the board's focus), a mouse drag in each direction, a finger drag in
-  each direction (real touch events over the Chrome DevTools Protocol), four viewport sizes
-  for upstream's banner rule and the button staying clear of the grid, and the DOM-level
-  ⌘N/Ctrl+N (recorded only). It writes `report.json` and screenshots to `.build/probe`.
+  included). On the published build, with upstream's random source: launch, arrows (every
+  direction, then short games steered by the reference until a merge has been seen; the two
+  no-op variants are reported when a random game happens to offer them), New Game then
+  arrows (a regression: a click once dropped the board's focus), a mouse drag in each
+  direction, a finger drag in each direction (real touch events over the Chrome DevTools
+  Protocol), four viewport sizes for upstream's banner rule and the button staying clear of
+  the grid, and the DOM-level ⌘N/Ctrl+N (recorded only).
+
+  The **controlled** cases run on a second, separately built page — the *harness* build
+  (`scripts/build-web.sh --harness`, which has `Package.swift` define `HARNESS`; the
+  published page and the native app compile none of it). There `SwiftUI2048App.makeGameLogic`
+  reads `?board=` (sixteen numbers) and `?chooser=first|last` from the page's URL and passes
+  them to the model's two test seams, so a random game cannot decide what gets covered:
+  nothing-moves-nothing-spawns, nothing-moves-yet-two-spawn (quirk 3) and the same board on
+  the other axis, no spawn with one blank left (quirk 2), a merge line, and New Game's two
+  blocks — each asserted against the exact board. The rules of the game are the same in
+  both builds; only where the first board and the new blocks come from differs. The probe
+  writes `report.json` and screenshots to `.build/probe`, and passes only when both pages
+  passed.
 
   ```sh
   cd Playwright && npm install && npx playwright install chromium
-  node game-probe.mjs http://127.0.0.1:8791/index.html
+  scripts/build-web.sh --harness && python3 -m http.server 8792 --directory dist-harness &
+  node game-probe.mjs http://127.0.0.1:8791/index.html --harness http://127.0.0.1:8792/index.html
   ```
 - `.github/workflows/ci.yml` — `native`: the iOS simulator tests and a macOS build with
-  Xcode; `web`: the release wasm build and the probe (evidence uploaded as an artifact);
+  Xcode; `web`: the release wasm build, the harness build, and the probe over both (evidence
+  uploaded as an artifact);
   `pages`: on `master`, once both have passed, the deploy of that `dist/` to GitHub Pages —
   the hosted build is always one both sets of checks passed.
 
