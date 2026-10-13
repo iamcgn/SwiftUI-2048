@@ -56,6 +56,7 @@ jobs:
           python3 -m http.server 8791 --bind 127.0.0.1 --directory dist >/dev/null 2>&1 &
           python3 -m http.server 8792 --bind 127.0.0.1 --directory dist-harness >/dev/null 2>&1 &
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8791/index.html >/dev/null && curl -sf http://127.0.0.1:8792/index.html >/dev/null && break; sleep 1; done
+          echo "working tree before the probe:"; git status --porcelain
           cd Playwright && node game-probe.mjs http://127.0.0.1:8791/index.html --harness http://127.0.0.1:8792/index.html --out ../.build/probe
       - uses: actions/upload-artifact@v4
         if: always()

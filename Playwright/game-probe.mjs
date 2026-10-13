@@ -44,6 +44,9 @@ const git = (command) => { try { return execSync(command, { cwd: root, encoding:
 const report = {
   url, harness_url: harness, started: new Date().toISOString(),
   commit: git('git rev-parse HEAD'), working_tree: git('git status --porcelain') ? 'dirty' : 'clean',
+  // What differs from the commit when dirty (paths, `git status --porcelain` form), so a
+  // generated or tool-rewritten file is told apart from a source change.
+  working_tree_changes: (git('git status --porcelain') || '').split('\n').filter(Boolean),
   library: git('git -C vendor/swiftui-web rev-parse HEAD'),
   flows: [], screenshots: [], problems: [], full_app_pass: false,
 };
