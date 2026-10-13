@@ -36,15 +36,18 @@ all. The port replaces that shell with the SwiftUI app life cycle:
 | `SwiftUI2048-mac/` (AppKit target), `MainMenu.xib`, `LaunchScreen.storyboard`, `Info.plist`, entitlements | removed; one multi-platform target with a generated Info.plist and launch screen |
 | `SwiftUI2048.xcodeproj` (Xcode 11, iOS 13, Catalyst) | rewritten for Xcode 16+: iOS 17 / macOS 14, synchronized folders, a unit-test target |
 
-Unchanged: `Models/` (`BlockMatrix`, `GameLogic`, `IdentifiedBlock`), `Views/` (`BlockView`,
-`BlockGridView`, and `GameView` except for the additions above), `FunctionalUtils.swift`,
-`SwiftUIExtensions.swift`, the asset catalog. The deprecation warnings Xcode 16 gives on
-upstream's `animation(_:)` and `cornerRadius(_:)` are left as upstream wrote them.
-
-Two small additions to `GameLogic` are **test seams**, not behaviour: `init(randomIndex:)`
-takes the chooser that decides where new blocks land (the app passes nothing and gets
-upstream's `Int.random(in:)`), and `init(board:randomIndex:)` starts a game from a board a
-test laid out. The app never uses the second; nothing in the app is replaced by fixtures.
+Source-unchanged: `Models/BlockMatrix.swift`, `Models/IdentifiedBlock.swift`,
+`Views/BlockView.swift`, `Views/BlockGridView.swift`, `FunctionalUtils.swift`,
+`SwiftUIExtensions.swift`, the asset catalog. Changed only by the additions above:
+`Views/GameView.swift`. Changed only by two **test seams**: `Models/GameLogic.swift` — its
+algorithm and behaviour are preserved line for line (`move`, `merge`, `generateNewBlocks`,
+`newGame`, the publishing), but its source is not untouched: `init(randomIndex:)` takes the
+chooser that decides where new blocks land (the app passes nothing and gets upstream's
+`Int.random(in:)` through the default argument; the two `Int.random` calls became calls of
+that chooser), and `init(board:randomIndex:)` starts a game from a board a test laid out. The
+app never uses the second; nothing in the app is replaced by fixtures. The deprecation
+warnings Xcode 16 gives on upstream's `animation(_:)` and `cornerRadius(_:)` are left as
+upstream wrote them.
 
 The port also surfaced two bugs in SwiftUIWeb's runtime, fixed there (a `focusable()` view
 swallowing the drag gesture around it; a canvas click moving the page's focus to the body),
@@ -111,9 +114,13 @@ open http://127.0.0.1:8791/
 ```
 
 `scripts/build-web.sh` compiles `Package.swift` for `wasm32-unknown-wasip1` with the
-JavaScriptKit `PackageToJS` plugin, adds the asset catalog, and writes a self-contained site
-to `dist/` (the bundle under a name unique to the build, so caches never serve a stale wasm).
-That `dist/` is what GitHub Pages serves.
+JavaScriptKit `PackageToJS` plugin, adds the asset catalog, and writes the site to `dist/`
+(the bundle under a name unique to the build, so caches never serve a stale wasm). That
+`dist/` is what GitHub Pages serves. It has one dependency outside it: the plugin's
+`--use-cdn` makes `platforms/browser.js` import the WASI shim from
+`https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.4.1/+esm` (pinned to that
+version; the page does not load without it). Everything else — the wasm, the JavaScriptKit
+runtime, the assets — is in `dist/`.
 
 In a browser: swipe (touch or mouse drag) or use the arrow keys; **New Game** restarts.
 ⌘N / Ctrl+N is the browser's own New Window shortcut and never reaches a page, which is why
@@ -140,8 +147,9 @@ the restart is a visible button and the probe records the shortcut rather than c
   node game-probe.mjs http://127.0.0.1:8791/index.html
   ```
 - `.github/workflows/ci.yml` — `native`: the iOS simulator tests and a macOS build with
-  Xcode; `web`: the release wasm build, the probe (evidence uploaded as an artifact), and on
-  `master` the deploy of `dist/` to GitHub Pages.
+  Xcode; `web`: the release wasm build and the probe (evidence uploaded as an artifact);
+  `pages`: on `master`, once both have passed, the deploy of that `dist/` to GitHub Pages —
+  the hosted build is always one both sets of checks passed.
 
 ## Credits
 
