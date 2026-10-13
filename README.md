@@ -151,9 +151,11 @@ the restart is a visible button and the probe records the shortcut rather than c
   nothing-moves-nothing-spawns, nothing-moves-yet-two-spawn (quirk 3) and the same board on
   the other axis, no spawn with one blank left (quirk 2), a merge line, and New Game's two
   blocks — each asserted against the exact board. The rules of the game are the same in
-  both builds; only where the first board and the new blocks come from differs. The probe
-  writes `report.json` and screenshots to `.build/probe`, and passes only when both pages
-  passed.
+  both builds; only where the first board and the new blocks come from differs, and the
+  `release-boundary` flow loads the published page with such a query in its URL to confirm
+  it starts an ordinary game regardless. The probe writes `report.json` (both URLs, the
+  commit, whether the tree was dirty, the library pin) and screenshots to `.build/probe`,
+  and passes only when both pages passed.
 
   ```sh
   cd Playwright && npm install && npx playwright install chromium

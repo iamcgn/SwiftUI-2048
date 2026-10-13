@@ -21,7 +21,10 @@ for ARG in "$@"; do
 done
 SCRATCH=.build/wasm; DIST_NAME=dist
 # The manifest defines HARNESS from this variable (the PackageToJS plugin runs its own build,
-# so a -Xswiftc flag on this command line would not reach the compiler).
+# so a -Xswiftc flag on this command line would not reach the compiler). It is set from the
+# flag in both modes: an inherited SWIFTUI2048_HARNESS cannot turn an ordinary build into the
+# harness.
+export SWIFTUI2048_HARNESS=0
 if [[ $HARNESS == 1 ]]; then SCRATCH=.build/wasm-harness; DIST_NAME=dist-harness; export SWIFTUI2048_HARNESS=1; fi
 SDK="swift-$(cat "$ROOT/.swift-version")-RELEASE_wasm"
 # The library's environment: the swiftly toolchain first on PATH and, on macOS, the SDK and

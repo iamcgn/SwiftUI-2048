@@ -14,6 +14,8 @@
 //   touch-drag           a finger drag (real touch events over CDP) in each direction
 //   layout               portrait, phone landscape and tablet landscape: the banner as
 //                        upstream shows it, the New Game button clear of the grid
+//   release-boundary     the published build ignores a harness query in its URL (two random
+//                        blocks, not the board named there)
 //   dom-shortcut         what a page can and cannot see of ⌘N/Ctrl+N (recorded, not a pass)
 //   controlled-*         on the HARNESS build only (`scripts/build-web.sh --harness`, served
 //                        separately and passed as --harness <url>): the page's URL lays out
@@ -40,7 +42,7 @@ mkdirSync(out, { recursive: true });
 
 const git = (command) => { try { return execSync(command, { cwd: root, encoding: 'utf8' }).trim(); } catch { return null; } };
 const report = {
-  url, started: new Date().toISOString(),
+  url, harness_url: harness, started: new Date().toISOString(),
   commit: git('git rev-parse HEAD'), working_tree: git('git status --porcelain') ? 'dirty' : 'clean',
   library: git('git -C vendor/swiftui-web rev-parse HEAD'),
   flows: [], screenshots: [], problems: [], full_app_pass: false,
@@ -298,6 +300,23 @@ try {
     }
     flow('layout', results.every(r => r.ok) ? 'passed' : 'failed', { cases: results, note: results.map(r => `${r.width}×${r.height} ${r.ok ? 'ok' : 'FAIL'}`).join(', ') });
     await page.setViewportSize({ width: 390, height: 844 });
+    await settle();
+  }
+
+  // release-boundary: the published build with a harness query in its URL starts an
+  // ordinary game — two 2-blocks from upstream's random source, not the board in the URL.
+  {
+    const laid = [[2, 4, 8, 16], [32, 64, 128, 256], [2, 4, 8, 16], [32, 64, 128, 0]];
+    await page.goto(`${url}?chooser=first&board=${laid.flat().join(',')}`);
+    await page.waitForFunction(() => window.__swiftuiwebDebug && window.__swiftuiwebDebug.frameCount() > 0, null, { timeout: 180000 });
+    await settle();
+    const read = (await readBoard()).board;
+    const numbers = read.flat().filter(Boolean);
+    const ok = same(numbers, [2, 2]) && !same(read, laid);
+    if (!ok) problem(`release-boundary: the published build honoured a harness query: ${show(read)}`);
+    flow('release-boundary', ok ? 'passed' : 'failed', { board: read, note: `published build with ?board=…&chooser=first in its URL: ${numbers.length} blocks ${JSON.stringify(numbers)}, the URL's board ignored` });
+    await page.goto(url);
+    await page.waitForFunction(() => window.__swiftuiwebDebug && window.__swiftuiwebDebug.frameCount() > 0, null, { timeout: 180000 });
     await settle();
   }
 
